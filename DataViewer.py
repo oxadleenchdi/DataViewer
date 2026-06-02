@@ -1,0 +1,678 @@
+import streamlit as st
+import pandas as pd
+import sqlite3
+import plotly.express as px
+import numpy as np
+
+# --- Helper Functions ---
+def get_db_connection(db_path):
+    try:
+        conn = sqlite3.connect(db_path, check_same_thread=False)
+        return conn
+    except Exception as e:
+        st.error(f"Error connecting to database: {e}")
+        return None
+
+def get_table_names(conn):
+    try:
+        query = "SELECT name FROM sqlite_master WHERE type='table' AND name!='sqlite_sequence'"
+        return pd.read_sql_query(query, conn)
+    except Exception as e:
+        st.error(f"Error getting table names: {e}")
+        return pd.DataFrame()
+
+def get_table_data(conn, table_name):
+    try:
+        pragma_query = f"PRAGMA table_info(`{table_name}`)"
+        schema_df = pd.read_sql_query(pragma_query, conn)
+        dtype_map = {}
+        string_types = ['TEXT', 'VARCHAR', 'CHAR', 'CLOB']
+        for index, row in schema_df.iterrows():
+            col_name = row['name']
+            col_type = str(row['type']).upper()
+            if any(st in col_type for st in string_types):
+                dtype_map[col_name] = 'string'
+        return pd.read_sql_query(f"SELECT * FROM `{table_name}`", conn, dtype=dtype_map)
+    except Exception as e:
+        st.error(f"Error getting table data: {e}")
+        return pd.DataFrame()
+
+def display_plot(df, columns, key_prefix):
+    x_axis = st.selectbox("X-axis", options=columns, key=f"{key_prefix}_x_axis")
+    y_axes = st.multiselect("Y-axes", options=[c for c in columns if c != x_axis], key=f"{key_prefix}_y_axes")
+
+    with st.expander("Customize Plot"):
+        plot_type = st.selectbox("Plot Type", ['Line', 'Bar', 'Scatter'], key=f"{key_prefix}_plot_type")
+        if plot_type == 'Scatter' and len(y_axes) > 1:
+            st.warning("Scatter plot only supports one Y-axis. Only the first selected Y-axis will be used.")
+        color_by = st.selectbox("Color by", options=[None] + columns, key=f"{key_prefix}_color")
+        symbol_by = st.selectbox("Symbol by", options=[None] + columns, key=f"{key_prefix}_symbol")
+        if plot_type == 'Line':
+            st.checkbox("Show Markers", key=f"{key_prefix}_markers")
+        elif plot_type == 'Bar':
+            st.radio("Bar Mode", ['group', 'relative'], key=f"{key_prefix}_barmode")
+        elif plot_type == 'Scatter':
+            st.selectbox("Size by", options=[None] + [c for c in columns if pd.api.types.is_numeric_dtype(df[c])],
+                         key=f"{key_prefix}_size")
+
+    with st.expander("Annotate & Modify Plot"):
+        title_input = st.text_input("Plot Title", key=f"{key_prefix}_title_input")
+        x_label_input = st.text_input("X-axis Label", key=f"{key_prefix}_xlabel_input")
+        y_label_input = st.text_input("Y-axis Label", key=f"{key_prefix}_ylabel_input")
+        legend_title_input = st.text_input("Legend Title", key=f"{key_prefix}_legend_title_input")
+        st.checkbox("Show Values on Plot", key=f"{key_prefix}_show_values")
+        new_legend_names = {}
+        plot_type_for_legend = st.session_state.get(f"{key_prefix}_plot_type", 'Line')
+        if plot_type_for_legend in ['Line', 'Bar'] and len(y_axes) > 1:
+            st.markdown("---")
+            st.write("Rename Legend Entries:")
+            for col in y_axes:
+                new_name = st.text_input(f'"{col}" ->', value=col, key=f"{key_prefix}_legend_{col}")
+                new_legend_names[col] = new_name
+
+    if x_axis and y_axes:
+        try:
+            plot_type = st.session_state.get(f"{key_prefix}_plot_type", 'Line')
+            show_values = st.session_state.get(f"{key_prefix}_show_values", False)
+            fig = None
+            if plot_type == 'Line':
+                fig = px.line(df, x=x_axis, y=y_axes, markers=st.session_state.get(f"{key_prefix}_markers", False),
+                              color=st.session_state.get(f"{key_prefix}_color"),
+                              symbol=st.session_state.get(f"{key_prefix}_symbol"))
+            elif plot_type == 'Bar':
+                fig = px.bar(df, x=x_axis, y=y_axes, barmode=st.session_state.get(f"{key_prefix}_barmode", 'group'),
+                             color=st.session_state.get(f"{key_prefix}_color"))
+            elif plot_type == 'Scatter':
+                fig = px.scatter(df, x=x_axis, y=y_axes[0], color=st.session_state.get(f"{key_prefix}_color"),
+                                 size=st.session_state.get(f"{key_prefix}_size"),
+                                 symbol=st.session_state.get(f"{key_prefix}_symbol"))
+            if fig:
+                if show_values:
+                    text_template = '%{y}'
+                    if plot_type == 'Bar':
+                        fig.update_traces(texttemplate=text_template, textposition='outside')
+                    elif plot_type == 'Line':
+                        mode = 'lines+text'
+                        if st.session_state.get(f"{key_prefix}_markers", False):
+                            mode = 'lines+markers+text'
+                        fig.update_traces(texttemplate=text_template, textposition='top center', mode=mode)
+                    elif plot_type == 'Scatter':
+                        fig.update_traces(texttemplate=text_template, textposition='top center', mode='markers+text')
+
+                fig.update_layout(
+                    title_text=title_input if title_input else '',
+                    xaxis_title=x_label_input if x_label_input else x_axis,
+                    yaxis_title=y_label_input if y_label_input else (y_axes[0] if len(y_axes) == 1 else "Value"),
+                    legend_title_text=legend_title_input if legend_title_input else None,
+                    title_x=0.5,
+                    title_xanchor='center'
+                )
+                if new_legend_names:
+                    fig.for_each_trace(lambda t: t.update(name=new_legend_names.get(t.name, t.name)))
+                st.plotly_chart(fig, use_container_width=True, config={'toImageButtonOptions': {'scale': 3}})
+        except Exception as e:
+            st.error(f"Error plotting: {e}")
+
+def main(mode):
+    st.set_page_config(layout="wide", page_title="Data Viewer")
+    st.title("Data Viewer and Analyzer")
+
+    # --- Initialize Session State ---
+    if "data_df" not in st.session_state:
+        st.session_state.data_df = None
+    if "cleaned_df" not in st.session_state:
+        st.session_state.cleaned_df = None
+    if "uploaded_filename" not in st.session_state:
+        st.session_state.uploaded_filename = None
+    if "uploaded_file_obj" not in st.session_state:
+        st.session_state.uploaded_file_obj = None
+    if "show_clear_message" not in st.session_state:
+        st.session_state.show_clear_message = False
+
+    # Display clear message if flag is set
+    if st.session_state.show_clear_message:
+        st.sidebar.warning("User data has been completed destroyed.")
+        st.session_state.show_clear_message = False
+
+    st.sidebar.header("Data Source")
+
+    # --- SERVER MODE ---
+    if mode == 'server':
+        # STATE 1: If data is loaded, show status and a clear button
+        if st.session_state.data_df is not None:
+            st.sidebar.success(f"Loaded: {st.session_state.uploaded_filename}")
+            if st.sidebar.button("Clear Data"):
+                st.session_state.data_df = None
+                st.session_state.cleaned_df = None
+                st.session_state.uploaded_file_obj = None
+                st.session_state.uploaded_filename = None
+                st.session_state.show_clear_message = True
+                st.rerun()
+
+        # STATE 2: If an Excel file has been uploaded (and not cleared), show sheet selector
+        if st.session_state.uploaded_file_obj is not None:
+            try:
+                st.sidebar.info(f"File: {st.session_state.uploaded_filename}")
+                xls = pd.ExcelFile(st.session_state.uploaded_file_obj)
+                sheet_names = xls.sheet_names
+                selected_sheet = st.sidebar.selectbox("Select a sheet to load", sheet_names)
+                header_row = st.sidebar.number_input("Header Row", min_value=0, value=0, help="The row number (0-indexed) to use as the column headers.")
+                
+                if st.sidebar.button("Load Sheet"):
+                    st.session_state.data_df = pd.read_excel(st.session_state.uploaded_file_obj, sheet_name=selected_sheet, header=header_row)
+                    st.session_state.data_df = st.session_state.data_df.replace(r'^\s*$', np.nan, regex=True)
+                    st.session_state.cleaned_df = None
+                    st.rerun()
+            except Exception as e:
+                st.sidebar.error(f"Error processing Excel file: {e}")
+                st.session_state.uploaded_file_obj = None
+                st.session_state.uploaded_filename = None
+                st.rerun()
+
+        # STATE 3: If no file is uploaded (and no Excel file is pending sheet selection), show the uploader
+        elif st.session_state.data_df is None and st.session_state.uploaded_file_obj is None:
+            source_type = st.sidebar.radio("Select data source type", ["CSV", "Excel"])
+            uploaded_file = st.sidebar.file_uploader("Choose a file", type=["csv", "xlsx"])
+
+            if uploaded_file is not None:
+                st.session_state.uploaded_filename = uploaded_file.name
+                
+                if source_type == "CSV":
+                    try:
+                        st.session_state.data_df = pd.read_csv(uploaded_file)
+                        st.session_state.data_df = st.session_state.data_df.replace(r'^\s*$', np.nan, regex=True)
+                        st.session_state.cleaned_df = None
+                        st.rerun()
+                    except Exception as e:
+                        st.sidebar.error(f"Error loading CSV: {e}")
+                        st.session_state.uploaded_filename = None
+                
+                elif source_type == "Excel":
+                    st.session_state.uploaded_file_obj = uploaded_file
+                    st.rerun()
+
+    # --- LOCAL MODE ---
+    else:
+        source_type = st.sidebar.radio("Select data source type", ["SQLite", "CSV", "Excel"])
+        if source_type == "SQLite":
+            if st.session_state.get('db_conn') is None:
+                db_path = st.sidebar.text_input("SQLite DB Path")
+                if st.sidebar.button("Connect"):
+                    st.session_state.db_conn = get_db_connection(db_path)
+                    st.session_state.cleaned_df = None
+                    st.rerun()
+            else:
+                st.sidebar.success("Connected to database.")
+                tables_df = get_table_names(st.session_state.db_conn)
+                if not tables_df.empty:
+                    table_names = tables_df["name"].tolist()
+                    selected_table = st.sidebar.selectbox("Select a table", table_names)
+                    if st.sidebar.button("Load Table"):
+                        st.session_state.data_df = get_table_data(st.session_state.db_conn, selected_table)
+                        st.session_state.data_df = st.session_state.data_df.replace(r'^\s*$', np.nan, regex=True)
+                        st.session_state.cleaned_df = None
+                        st.rerun()
+
+                if st.sidebar.button("Close Connection"):
+                    st.session_state.db_conn.close()
+                    st.session_state.db_conn = None
+                    st.session_state.data_df = None
+                    st.session_state.cleaned_df = None
+                    st.rerun()
+
+        elif source_type == "CSV":
+            if st.session_state.get('csv_path') is None:
+                csv_path_input = st.sidebar.text_input("Enter path to CSV file")
+                if st.sidebar.button("Load CSV"):
+                    try:
+                        st.session_state.data_df = pd.read_csv(csv_path_input)
+                        st.session_state.data_df = st.session_state.data_df.replace(r'^\s*$', np.nan, regex=True)
+                        st.session_state.cleaned_df = None
+                        st.session_state.csv_path = csv_path_input
+                        st.rerun()
+                    except FileNotFoundError:
+                        st.sidebar.error("File not found. Please check the path.")
+                    except Exception as e:
+                        st.sidebar.error(f"Error loading CSV: {e}")
+            else:
+                st.sidebar.success(f"Loaded: {st.session_state.csv_path}")
+                if st.sidebar.button("Close CSV"):
+                    st.session_state.csv_path = None
+                    st.session_state.data_df = None
+                    st.session_state.cleaned_df = None
+                    st.rerun()
+
+        elif source_type == "Excel":
+            if 'excel_path' not in st.session_state or st.session_state.excel_path is None:
+                excel_path_input = st.sidebar.text_input("Enter path to Excel file")
+                if st.sidebar.button("Open Excel"):
+                    try:
+                        pd.ExcelFile(excel_path_input)
+                        st.session_state.excel_path = excel_path_input
+                        st.session_state.cleaned_df = None
+                        st.rerun()
+                    except FileNotFoundError:
+                        st.sidebar.error("File not found.")
+                    except Exception as e:
+                        st.sidebar.error(f"Error opening Excel file: {e}")
+            else:
+                st.sidebar.success(f"Opened: {st.session_state.excel_path}")
+                try:
+                    xls = pd.ExcelFile(st.session_state.excel_path)
+                    sheet_names = xls.sheet_names
+                    selected_sheet = st.sidebar.selectbox("Select a sheet", sheet_names)
+                    header_row = st.sidebar.number_input("Header Row", min_value=0, value=0, help="The row number (0-indexed) to use as the column headers.")
+                    if st.sidebar.button("Load Sheet"):
+                        st.session_state.data_df = pd.read_excel(st.session_state.excel_path, sheet_name=selected_sheet, header=header_row)
+                        st.session_state.data_df = st.session_state.data_df.replace(r'^\s*$', np.nan, regex=True)
+                        st.session_state.cleaned_df = None
+                        st.rerun()
+                except Exception as e:
+                    st.sidebar.error(f"Error processing Excel file: {e}")
+
+                if st.sidebar.button("Close Excel"):
+                    st.session_state.excel_path = None
+                    st.session_state.data_df = None
+                    st.session_state.cleaned_df = None
+                    st.rerun()
+
+    # --- Main App ---
+    if st.session_state.data_df is not None and not st.session_state.data_df.empty:
+        data_df = st.session_state.data_df
+        if 'id' in data_df.columns:
+            data_df = data_df.drop(columns=['id'])
+
+        st.sidebar.subheader("Loaded Data Columns")
+        st.sidebar.dataframe(data_df.dtypes.astype(str).rename_axis(None).reset_index().rename(columns={'index': 'column', 0: 'dtype'}))
+
+        tab1, tab2, tab3, tab4, tab5 = st.tabs(["Data View", "Column Analysis", "Filter & Plot", "Pivot Table", "Data Cleaning"])
+
+        with tab1:
+            st.header("Data View")
+            st.dataframe(data_df)
+            st.subheader("Data Summary")
+            st.write(data_df.describe())
+
+        with tab2:
+            st.header("Column Analysis")
+
+            all_columns = data_df.columns.tolist()
+            columns_to_analyze = st.multiselect(
+                "Select one or more columns to analyze",
+                options=all_columns,
+                key="column_analysis_selection"
+            )
+
+            if not columns_to_analyze:
+                st.info("Please select one or more columns to begin analysis.")
+
+            elif len(columns_to_analyze) == 1:
+                st.subheader("Single Column Analysis")
+                column_to_analyze = columns_to_analyze[0]
+                col_data = data_df[column_to_analyze]
+                is_numeric = pd.api.types.is_numeric_dtype(col_data)
+
+                if is_numeric:
+                    analysis_options = ['Value Plot', 'Histogram', 'Box Plot', 'Summary Statistics']
+                else:
+                    analysis_options = ['Value Plot', 'Value Counts', 'Summary Statistics']
+
+                analysis_type = st.selectbox(
+                    "Choose an analysis type",
+                    options=analysis_options,
+                    key="column_analysis_type"
+                )
+
+                st.subheader(f"Analysis of: `{column_to_analyze}`")
+
+                if analysis_type == 'Summary Statistics':
+                    st.write(col_data.describe())
+
+                elif analysis_type == 'Histogram':
+                    if is_numeric:
+                        st.markdown("#### Histogram Parameters")
+                        nbins = st.slider("Number of bins", min_value=5, max_value=100, value=30, key="hist_bins")
+                        fig = px.histogram(data_df, x=column_to_analyze, nbins=nbins,
+                                           title=f"Histogram of {column_to_analyze}")
+                        st.plotly_chart(fig, use_container_width=True, config={'toImageButtonOptions': {'scale': 3}})
+                    else:
+                        st.warning("Histogram is only available for numeric columns.")
+
+                elif analysis_type == 'Box Plot':
+                    if is_numeric:
+                        fig = px.box(data_df, y=column_to_analyze, title=f"Box Plot of {column_to_analyze}")
+                        st.plotly_chart(fig, use_container_width=True, config={'toImageButtonOptions': {'scale': 3}})
+                    else:
+                        st.warning("Box Plot is only available for numeric columns.")
+
+                elif analysis_type == 'Value Counts':
+                    st.markdown("#### Value Counts Parameters")
+                    top_n = st.slider("Number of top values to display", min_value=5, max_value=100, value=20,
+                                      key="value_counts_top_n")
+                    counts = col_data.value_counts().nlargest(top_n).reset_index()
+                    counts.columns = [column_to_analyze, 'count']
+                    fig = px.bar(counts, x=column_to_analyze, y='count',
+                                 title=f"Top {top_n} Value Counts for {column_to_analyze}")
+                    fig.update_xaxes(type='category')
+                    st.plotly_chart(fig, use_container_width=True, config={'toImageButtonOptions': {'scale': 3}})
+
+                    st.write(col_data.value_counts().reset_index())
+
+                elif analysis_type == 'Value Plot':
+                    st.markdown("#### Plot Parameters")
+                    plot_type = st.radio("Plot Type", ['Line', 'Scatter'], key="value_plot_type")
+
+                    if plot_type == 'Line':
+                        fig = px.line(data_df, y=column_to_analyze, title=f"Value Plot of {column_to_analyze}")
+                    else:
+                        fig = px.scatter(data_df, y=column_to_analyze, title=f"Value Plot of {column_to_analyze}")
+
+                    fig.update_xaxes(title_text='Index')
+                    st.plotly_chart(fig, use_container_width=True, config={'toImageButtonOptions': {'scale': 3}})
+
+            else:
+                st.subheader("Multi-Column Analysis")
+
+                are_all_numeric = all(pd.api.types.is_numeric_dtype(data_df[col]) for col in columns_to_analyze)
+
+                if are_all_numeric:
+                    analysis_options = ['Summary Statistics', 'Correlation Heatmap', 'Value Plot (Line)', 'Box Plot',
+                                        'Scatter Matrix']
+                else:
+                    analysis_options = ['Summary Statistics']
+                    st.warning(
+                        "Some plots require all selected columns to be numeric. Only summary statistics are available.")
+
+                analysis_type = st.selectbox("Choose an analysis type", options=analysis_options,
+                                             key="multi_col_analysis_type")
+
+                st.subheader(f"Analysis of: `{', '.join(columns_to_analyze)}`")
+
+                if analysis_type == 'Summary Statistics':
+                    st.write(data_df[columns_to_analyze].describe())
+
+                elif analysis_type == 'Correlation Heatmap':
+                    st.info(
+                        "A correlation heatmap shows the correlation coefficient between pairs of numeric variables.")
+                    corr_matrix = data_df[columns_to_analyze].corr()
+                    fig = px.imshow(corr_matrix, text_auto=True, title="Correlation Heatmap",
+                                    color_continuous_scale='RdBu_r', zmin=-1, zmax=1)
+                    st.plotly_chart(fig, use_container_width=True, config={'toImageButtonOptions': {'scale': 3}})
+
+                elif analysis_type == 'Value Plot (Line)':
+                    fig = px.line(data_df, y=columns_to_analyze, title="Value Plot")
+                    fig.update_xaxes(title_text='Index')
+                    st.plotly_chart(fig, use_container_width=True, config={'toImageButtonOptions': {'scale': 3}})
+
+                elif analysis_type == 'Box Plot':
+                    fig = px.box(data_df, y=columns_to_analyze, title="Box Plots")
+                    st.plotly_chart(fig, use_container_width=True, config={'toImageButtonOptions': {'scale': 3}})
+
+                elif analysis_type == 'Scatter Matrix':
+                    st.info(
+                        "A scatter matrix plots every numeric column against every other. It can be slow for many columns.")
+                    fig = px.scatter_matrix(data_df, dimensions=columns_to_analyze, title="Scatter Matrix")
+                    st.plotly_chart(fig, use_container_width=True, config={'toImageButtonOptions': {'scale': 3}})
+
+        with tab3:
+            st.header("Advanced Filter")
+
+            if "adv_filters" not in st.session_state:
+                st.session_state.adv_filters = []
+            if "adv_plots" not in st.session_state:
+                st.session_state.adv_plots = []
+
+            if st.session_state.adv_filters:
+                current_columns = data_df.columns.tolist()
+                st.session_state.adv_filters = [
+                    f for f in st.session_state.adv_filters if f.get('column') in current_columns
+                ]
+
+            columns_to_show = st.multiselect("Select columns to display", data_df.columns.tolist(),
+                                             default=data_df.columns.tolist(), key="adv_cols_to_show")
+
+            with st.expander("Filtering Options"):
+                def add_adv_filter():
+                    st.session_state.adv_filters.append({'column': data_df.columns[0], 'operator': '==', 'value': ''})
+
+                def remove_adv_filter(index):
+                    st.session_state.adv_filters.pop(index)
+
+                st.button("Add filter", on_click=add_adv_filter)
+                for i, f in enumerate(st.session_state.adv_filters):
+                    cols = st.columns(4)
+                    f['column'] = cols[0].selectbox("Column", data_df.columns, key=f'adv_col_{i}',
+                                                    index=data_df.columns.tolist().index(f['column']))
+                    f['operator'] = cols[1].selectbox("Operator", ['==', '!=', '>', '<', '>=', '<=', 'in', 'not in'],
+                                                      key=f'adv_op_{i}',
+                                                      index=['==', '!=', '>', '<', '>=', '<=', 'in', 'not in'].index(
+                                                          f['operator']))
+                    col_type = data_df[f['column']].dtype
+                    if pd.api.types.is_numeric_dtype(col_type):
+                        f['value'] = cols[2].text_input("Value", key=f'adv_val_{i}', value=f.get('value', ''))
+                    else:
+                        unique_vals = data_df[f['column']].dropna().unique()
+                        if f['operator'] in ['in', 'not in']:
+                            f['value'] = cols[2].multiselect("Value", options=unique_vals, key=f'adv_val_{i}',
+                                                             default=f.get('value', []))
+                        else:
+                            f['value'] = cols[2].selectbox("Value", options=unique_vals, key=f'adv_val_{i}',
+                                                           index=0 if not f.get('value') or f.get(
+                                                               'value') not in unique_vals else unique_vals.tolist().index(
+                                                               f.get('value')))
+                    cols[3].button("Remove", on_click=remove_adv_filter, args=(i,), key=f'adv_rem_{i}')
+
+            filtered_df = data_df.copy()
+            for f in st.session_state.adv_filters:
+                if f['value'] and f['column'] and f['operator']:
+                    try:
+                        if f['operator'] in ['in', 'not in']:
+                            values = f['value'] if isinstance(f['value'], list) else [v.strip() for v in
+                                                                                      f['value'].split(',')]
+                            if f['operator'] == 'in':
+                                filtered_df = filtered_df[filtered_df[f['column']].isin(values)]
+                            else:
+                                filtered_df = filtered_df[~filtered_df[f['column']].isin(values)]
+                        else:
+                            col_type = data_df[f['column']].dtype
+                            val = f['value']
+                            if pd.api.types.is_numeric_dtype(col_type):
+                                val = pd.to_numeric(f['value'])
+                            query_str = f"`{f['column']}` {f['operator']} @val"
+                            filtered_df = filtered_df.query(query_str)
+                    except Exception as e:
+                        st.error(f"Filter error on column {f['column']}: {e}")
+
+            st.subheader("Filtered Data")
+            st.dataframe(filtered_df[columns_to_show])
+            st.subheader("Filtered Data Summary")
+            if columns_to_show:
+                st.write(filtered_df[columns_to_show].describe())
+            else:
+                st.info("Select columns to see a summary.")
+
+            with st.expander("Plotting Options"):
+                def add_adv_plot():
+                    st.session_state.adv_plots.append(1)
+
+                def remove_adv_plot(index):
+                    st.session_state.adv_plots.pop(index)
+
+                st.button("Add Plot", on_click=add_adv_plot, key="add_adv_plot_btn")
+                if not filtered_df.empty and columns_to_show:
+                    for i in range(len(st.session_state.adv_plots)):
+                        st.markdown(f"--- Plot {i + 1} ---")
+                        display_plot(filtered_df, columns_to_show, f"adv_plot_{i}")
+                        st.button("Remove Plot", on_click=remove_adv_plot, args=(i,), key=f"remove_adv_plot_{i}")
+
+        with tab4:
+            st.header("Interactive Pivot Table")
+            st.info("Create a pivot table to summarize and reorganize your data.")
+
+            all_columns = data_df.columns.tolist()
+            numeric_columns = [col for col in all_columns if pd.api.types.is_numeric_dtype(data_df[col])]
+
+            pivot_rows = st.multiselect("Select Row(s)", options=all_columns, key="pivot_rows")
+            pivot_cols = st.multiselect("Select Column(s)", options=all_columns, key="pivot_cols")
+
+            if not numeric_columns:
+                st.warning(
+                    "No numeric columns available to aggregate. Pivot table requires at least one numeric 'Values' column.")
+                pivot_vals = []
+            else:
+                pivot_vals = st.multiselect("Select Value(s) to Aggregate", options=numeric_columns, key="pivot_vals")
+
+            agg_func_options = ['mean', 'sum', 'count', 'median', 'min', 'max', 'std']
+            pivot_agg = st.selectbox("Select Aggregation Function", options=agg_func_options, key="pivot_agg")
+
+            if st.button("Generate Pivot Table", key="generate_pivot"):
+                if not pivot_rows or not pivot_vals:
+                    st.error("Please select at least one 'Row' and one 'Value' to generate a pivot table.")
+                else:
+                    try:
+                        st.subheader("Pivot Table Result")
+                        pivot_df = pd.pivot_table(
+                            data_df,
+                            index=pivot_rows,
+                            columns=pivot_cols if pivot_cols else None,
+                            values=pivot_vals,
+                            aggfunc=pivot_agg
+                        )
+                        st.dataframe(pivot_df.reset_index())
+                    except Exception as e:
+                        st.error(f"Error generating pivot table: {e}")
+
+        with tab5:
+            st.header("Data Cleaning Tools")
+
+            if 'cleaned_df' not in st.session_state or st.session_state.cleaned_df is None:
+                st.session_state.cleaned_df = st.session_state.data_df.copy()
+
+            df_to_clean = st.session_state.cleaned_df
+
+            st.subheader("Current Data")
+            st.dataframe(df_to_clean)
+
+            st.subheader("Cleaning Actions")
+
+            with st.expander("Handle Missing Values"):
+                st.markdown("#### Missing Value Analysis")
+                missing_summary = df_to_clean.isna().sum()
+                missing_summary = missing_summary[missing_summary > 0]
+
+                if missing_summary.empty:
+                    st.success("No missing values found!")
+                else:
+                    st.write("Columns with missing values:")
+                    missing_df = pd.DataFrame({'Column': missing_summary.index, 'Number of Missing Values': missing_summary.values})
+                    st.dataframe(missing_df)
+                    st.bar_chart(missing_df.set_index('Column'))
+
+                st.markdown("#### Apply a cleaning action")
+                all_columns_mv = df_to_clean.columns.tolist()
+                col_to_clean = st.selectbox("1. Select a column to clean", options=all_columns_mv, key="clean_col")
+
+                if col_to_clean:
+                    is_numeric = pd.api.types.is_numeric_dtype(df_to_clean[col_to_clean])
+                    action_options = ["Drop rows with missing values"]
+                    if is_numeric:
+                        action_options.extend(
+                            ["Fill with mean", "Fill with median", "Fill with mode", "Fill with custom value"])
+                    else:
+                        action_options.extend(["Fill with mode", "Fill with custom value"])
+
+                    action = st.selectbox("2. Choose an action", options=action_options, key="clean_action")
+                    custom_value = st.text_input("Enter custom value (if applicable)",
+                                                 key="clean_custom_val") if "custom" in action else None
+
+                    if st.button("Apply Missing Value Action", key="apply_clean"):
+                        try:
+                            if action == "Drop rows with missing values":
+                                st.session_state.cleaned_df = df_to_clean.dropna(subset=[col_to_clean])
+                            elif action == "Fill with mean":
+                                fill_val = df_to_clean[col_to_clean].mean()
+                                st.session_state.cleaned_df[col_to_clean] = df_to_clean[col_to_clean].fillna(fill_val)
+                            elif action == "Fill with median":
+                                fill_val = df_to_clean[col_to_clean].median()
+                                st.session_state.cleaned_df[col_to_clean] = df_to_clean[col_to_clean].fillna(fill_val)
+                            elif action == "Fill with mode":
+                                fill_val = df_to_clean[col_to_clean].mode()[0]
+                                st.session_state.cleaned_df[col_to_clean] = df_to_clean[col_to_clean].fillna(fill_val)
+                            elif action == "Fill with custom value":
+                                if custom_value is not None and custom_value != '':
+                                    original_dtype = df_to_clean[col_to_clean].dtype
+                                    val_to_fill = pd.Series([custom_value]).astype(original_dtype)[0]
+                                    st.session_state.cleaned_df[col_to_clean] = df_to_clean[col_to_clean].fillna(
+                                        val_to_fill)
+                                else:
+                                    st.error("Please provide a custom value.")
+                                    st.stop()
+                            st.success(f"Action '{action}' applied to column '{col_to_clean}'.")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Failed to apply action: {e}")
+
+            with st.expander("Delete Rows"):
+                rows_to_delete = st.multiselect("Select rows to delete by index", options=df_to_clean.index.tolist())
+                if st.button("Delete Selected Rows"):
+                    if rows_to_delete:
+                        st.session_state.cleaned_df = df_to_clean.drop(index=rows_to_delete)
+                        st.success(f"Deleted {len(rows_to_delete)} row(s).")
+                        st.rerun()
+                    else:
+                        st.warning("No rows selected to delete.")
+
+            with st.expander("Set Row as Header"):
+                row_as_header = st.selectbox("Select a row to set as the new header",
+                                             options=['-'] + df_to_clean.index.tolist())
+                if st.button("Set as Header"):
+                    if row_as_header != '-':
+                        new_header = df_to_clean.iloc[row_as_header].astype(str)
+                        new_df = df_to_clean.copy()
+                        new_df.columns = new_header
+                        new_df.columns.name = None
+                        new_df = new_df.drop(row_as_header)
+                        st.session_state.cleaned_df = new_df
+                        st.success(f"Row {row_as_header} set as new header.")
+                        st.rerun()
+                    else:
+                        st.warning("No row selected.")
+
+            with st.expander("Rename Columns"):
+                cols_to_rename = st.multiselect("Select columns to rename", options=df_to_clean.columns.tolist())
+                new_names = {}
+                for col in cols_to_rename:
+                    new_names[col] = st.text_input(f"New name for '{col}'", value=col)
+
+                if st.button("Rename Selected Columns"):
+                    if new_names:
+                        if len(set(new_names.values())) != len(new_names.values()):
+                            st.error("New column names must be unique.")
+                        else:
+                            st.session_state.cleaned_df = df_to_clean.rename(columns=new_names)
+                            st.success("Columns renamed.")
+                            st.rerun()
+                    else:
+                        st.warning("No columns selected to rename.")
+
+            st.markdown("---")
+            col1, col2 = st.columns(2)
+            with col1:
+                if st.button("Confirm and Overwrite Original Data"):
+                    st.session_state.data_df = st.session_state.cleaned_df.copy()
+                    st.success("Data has been updated!")
+                    st.rerun()
+            with col2:
+                if st.button("Reset Cleaning"):
+                    st.session_state.cleaned_df = st.session_state.data_df.copy()
+                    st.info("Cleaning has been reset.")
+                    st.rerun()
+
+    else:
+        st.info("Please connect to a data source and load data to begin. Your data is NOT logged, saved, or used any where else except be presented in this UI.")
+
+
+if __name__ == "__main__":
+    mode = 'server'
+    # mode = 'local'
+    main(mode=mode)
