@@ -4,6 +4,8 @@ import sqlite3
 import plotly.express as px
 import numpy as np
 
+import streamlit.components.v1 as components
+
 # --- Helper Functions ---
 def get_db_connection(db_path):
     try:
@@ -109,12 +111,13 @@ def display_plot(df, columns, key_prefix):
                 )
                 if new_legend_names:
                     fig.for_each_trace(lambda t: t.update(name=new_legend_names.get(t.name, t.name)))
-                st.plotly_chart(fig, use_container_width=True, config={'toImageButtonOptions': {'scale': 3}})
+                st.plotly_chart(fig, width='stretch', config={'toImageButtonOptions': {'scale': 3}})
         except Exception as e:
             st.error(f"Error plotting: {e}")
 
 def main(mode):
     st.set_page_config(layout="wide", page_title="Data Viewer")
+
     st.title("Data Viewer and Analyzer")
 
     # --- Initialize Session State ---
@@ -128,6 +131,12 @@ def main(mode):
         st.session_state.uploaded_file_obj = None
     if "show_clear_message" not in st.session_state:
         st.session_state.show_clear_message = False
+    if "is_time_series" not in st.session_state:
+        st.session_state.is_time_series = False
+    if "time_series_col" not in st.session_state:
+        st.session_state.time_series_col = None
+    if "time_series_period" not in st.session_state:
+        st.session_state.time_series_period = None
 
     # Display clear message if flag is set
     if st.session_state.show_clear_message:
@@ -141,7 +150,7 @@ def main(mode):
         # STATE 1: If data is loaded, show status and a clear button
         if st.session_state.data_df is not None:
             st.sidebar.success(f"Loaded: {st.session_state.uploaded_filename}")
-            if st.sidebar.button("Clear Data"):
+            if st.sidebar.button("Clear Data", type="primary"):
                 st.session_state.data_df = None
                 st.session_state.cleaned_df = None
                 st.session_state.uploaded_file_obj = None
@@ -149,132 +158,125 @@ def main(mode):
                 st.session_state.show_clear_message = True
                 st.rerun()
 
-        # STATE 2: If an Excel file has been uploaded (and not cleared), show sheet selector
+        # STATE 2: If a file has been uploaded (and not cleared), show load options
         if st.session_state.uploaded_file_obj is not None:
             try:
-                st.sidebar.info(f"File: {st.session_state.uploaded_filename}")
-                xls = pd.ExcelFile(st.session_state.uploaded_file_obj)
-                sheet_names = xls.sheet_names
-                selected_sheet = st.sidebar.selectbox("Select a sheet to load", sheet_names)
                 header_row = st.sidebar.number_input("Header Row", min_value=0, value=0, help="The row number (0-indexed) to use as the column headers.")
-                
-                if st.sidebar.button("Load Sheet"):
-                    st.session_state.data_df = pd.read_excel(st.session_state.uploaded_file_obj, sheet_name=selected_sheet, header=header_row)
+
+                file_extension = st.session_state.uploaded_filename.split('.')[-1].lower()
+                if file_extension in ["xlsx", "xls", "xlsm"]:
+                    xls = pd.ExcelFile(st.session_state.uploaded_file_obj)
+                    sheet_names = xls.sheet_names
+                    selected_sheet = st.sidebar.selectbox("Select a sheet to load", sheet_names)
+
+                if st.sidebar.button("Load Data", type="secondary"):
+                    st.session_state.uploaded_file_obj.seek(0)
+                    if file_extension == "csv":
+                        st.session_state.data_df = pd.read_csv(st.session_state.uploaded_file_obj, header=header_row)
+                    elif file_extension in ["xlsx", "xls", "xlsm"]:
+                        st.session_state.data_df = pd.read_excel(st.session_state.uploaded_file_obj, sheet_name=selected_sheet, header=header_row)
+                    
+                    st.session_state.data_df = st.session_state.data_df.replace(r'^\s*$', np.nan, regex=True)
+                    st.session_state.cleaned_df = None
+                    if st.session_state.is_time_series:
+                        st.session_state.is_time_series = False
+                        st.session_state.time_series_col_selector = None
+                        st.session_state.time_series_period_selector = None
+
+
+                    st.rerun()
+
+            except Exception as e:
+                st.sidebar.error(f"Error processing file: {e}")
+                st.session_state.uploaded_file_obj = None
+                st.session_state.uploaded_filename = None
+                st.rerun()
+
+        # STATE 3: If no file is uploaded (and no file is pending options selection), show the uploader
+        elif st.session_state.data_df is None and st.session_state.uploaded_file_obj is None:
+            uploaded_file = st.sidebar.file_uploader("Choose a file", type=["csv", "xlsx", "xlsm", "xls"])
+
+            if uploaded_file is not None:
+                st.session_state.uploaded_filename = uploaded_file.name
+                st.session_state.uploaded_file_obj = uploaded_file
+                st.rerun()
+
+    # --- LOCAL MODE ---
+    else:
+        if st.session_state.get('db_conn') is None and st.session_state.get('csv_path') is None and st.session_state.get('excel_path') is None:
+            path_input = st.sidebar.text_input("Enter path to SQLite, CSV, or Excel file")
+            if st.sidebar.button("Load Data"):
+                file_extension = path_input.split('.')[-1].lower()
+                if file_extension == 'db' or file_extension == 'sqlite' or file_extension == 'sqlite3':
+                    st.session_state.db_conn = get_db_connection(path_input)
+                    st.session_state.cleaned_df = None
+                    st.rerun()
+                elif file_extension == 'csv':
+                    st.session_state.csv_path = path_input
+                    st.rerun()
+                elif file_extension in ['xlsx', 'xls', 'xlsm']:
+                    st.session_state.excel_path = path_input
+                    st.rerun()
+
+        if st.session_state.get('db_conn') is not None:
+            st.sidebar.success("Connected to database.")
+            tables_df = get_table_names(st.session_state.db_conn)
+            if not tables_df.empty:
+                table_names = tables_df["name"].tolist()
+                selected_table = st.sidebar.selectbox("Select a table", table_names)
+                if st.sidebar.button("Load Table", type="secondary"):
+                    st.session_state.data_df = get_table_data(st.session_state.db_conn, selected_table)
+                    st.session_state.data_df = st.session_state.data_df.replace(r'^\s*$', np.nan, regex=True)
+                    st.session_state.cleaned_df = None
+                    st.rerun()
+
+            if st.sidebar.button("Close Connection", type="primary"):
+                st.session_state.db_conn.close()
+                st.session_state.db_conn = None
+                st.session_state.data_df = None
+                st.session_state.cleaned_df = None
+                st.rerun()
+
+        if st.session_state.get('csv_path') is not None:
+            st.sidebar.success(f"Loaded: {st.session_state.csv_path}")
+            header_row = st.sidebar.number_input("Header Row", min_value=0, value=0, help="The row number (0-indexed) to use as the column headers.")
+            if st.sidebar.button("Load Data", type="secondary"):
+                try:
+                    st.session_state.data_df = pd.read_csv(st.session_state.csv_path, header=header_row)
+                    st.session_state.data_df = st.session_state.data_df.replace(r'^\s*$', np.nan, regex=True)
+                    st.session_state.cleaned_df = None
+                    st.rerun()
+                except FileNotFoundError:
+                    st.sidebar.error("File not found. Please check the path.")
+                except Exception as e:
+                    st.sidebar.error(f"Error loading CSV: {e}")
+
+            if st.sidebar.button("Close CSV", type="primary"):
+                st.session_state.csv_path = None
+                st.session_state.data_df = None
+                st.session_state.cleaned_df = None
+                st.rerun()
+
+        if st.session_state.get('excel_path') is not None:
+            st.sidebar.success(f"Opened: {st.session_state.excel_path}")
+            try:
+                xls = pd.ExcelFile(st.session_state.excel_path)
+                sheet_names = xls.sheet_names
+                selected_sheet = st.sidebar.selectbox("Select a sheet", sheet_names)
+                header_row = st.sidebar.number_input("Header Row", min_value=0, value=0, help="The row number (0-indexed) to use as the column headers.")
+                if st.sidebar.button("Load Data", type="secondary"):
+                    st.session_state.data_df = pd.read_excel(st.session_state.excel_path, sheet_name=selected_sheet, header=header_row)
                     st.session_state.data_df = st.session_state.data_df.replace(r'^\s*$', np.nan, regex=True)
                     st.session_state.cleaned_df = None
                     st.rerun()
             except Exception as e:
                 st.sidebar.error(f"Error processing Excel file: {e}")
-                st.session_state.uploaded_file_obj = None
-                st.session_state.uploaded_filename = None
+
+            if st.sidebar.button("Close Excel", type="primary"):
+                st.session_state.excel_path = None
+                st.session_state.data_df = None
+                st.session_state.cleaned_df = None
                 st.rerun()
-
-        # STATE 3: If no file is uploaded (and no Excel file is pending sheet selection), show the uploader
-        elif st.session_state.data_df is None and st.session_state.uploaded_file_obj is None:
-            source_type = st.sidebar.radio("Select data source type", ["CSV", "Excel"])
-            uploaded_file = st.sidebar.file_uploader("Choose a file", type=["csv", "xlsx"])
-
-            if uploaded_file is not None:
-                st.session_state.uploaded_filename = uploaded_file.name
-                
-                if source_type == "CSV":
-                    try:
-                        st.session_state.data_df = pd.read_csv(uploaded_file)
-                        st.session_state.data_df = st.session_state.data_df.replace(r'^\s*$', np.nan, regex=True)
-                        st.session_state.cleaned_df = None
-                        st.rerun()
-                    except Exception as e:
-                        st.sidebar.error(f"Error loading CSV: {e}")
-                        st.session_state.uploaded_filename = None
-                
-                elif source_type == "Excel":
-                    st.session_state.uploaded_file_obj = uploaded_file
-                    st.rerun()
-
-    # --- LOCAL MODE ---
-    else:
-        source_type = st.sidebar.radio("Select data source type", ["SQLite", "CSV", "Excel"])
-        if source_type == "SQLite":
-            if st.session_state.get('db_conn') is None:
-                db_path = st.sidebar.text_input("SQLite DB Path")
-                if st.sidebar.button("Connect"):
-                    st.session_state.db_conn = get_db_connection(db_path)
-                    st.session_state.cleaned_df = None
-                    st.rerun()
-            else:
-                st.sidebar.success("Connected to database.")
-                tables_df = get_table_names(st.session_state.db_conn)
-                if not tables_df.empty:
-                    table_names = tables_df["name"].tolist()
-                    selected_table = st.sidebar.selectbox("Select a table", table_names)
-                    if st.sidebar.button("Load Table"):
-                        st.session_state.data_df = get_table_data(st.session_state.db_conn, selected_table)
-                        st.session_state.data_df = st.session_state.data_df.replace(r'^\s*$', np.nan, regex=True)
-                        st.session_state.cleaned_df = None
-                        st.rerun()
-
-                if st.sidebar.button("Close Connection"):
-                    st.session_state.db_conn.close()
-                    st.session_state.db_conn = None
-                    st.session_state.data_df = None
-                    st.session_state.cleaned_df = None
-                    st.rerun()
-
-        elif source_type == "CSV":
-            if st.session_state.get('csv_path') is None:
-                csv_path_input = st.sidebar.text_input("Enter path to CSV file")
-                if st.sidebar.button("Load CSV"):
-                    try:
-                        st.session_state.data_df = pd.read_csv(csv_path_input)
-                        st.session_state.data_df = st.session_state.data_df.replace(r'^\s*$', np.nan, regex=True)
-                        st.session_state.cleaned_df = None
-                        st.session_state.csv_path = csv_path_input
-                        st.rerun()
-                    except FileNotFoundError:
-                        st.sidebar.error("File not found. Please check the path.")
-                    except Exception as e:
-                        st.sidebar.error(f"Error loading CSV: {e}")
-            else:
-                st.sidebar.success(f"Loaded: {st.session_state.csv_path}")
-                if st.sidebar.button("Close CSV"):
-                    st.session_state.csv_path = None
-                    st.session_state.data_df = None
-                    st.session_state.cleaned_df = None
-                    st.rerun()
-
-        elif source_type == "Excel":
-            if 'excel_path' not in st.session_state or st.session_state.excel_path is None:
-                excel_path_input = st.sidebar.text_input("Enter path to Excel file")
-                if st.sidebar.button("Open Excel"):
-                    try:
-                        pd.ExcelFile(excel_path_input)
-                        st.session_state.excel_path = excel_path_input
-                        st.session_state.cleaned_df = None
-                        st.rerun()
-                    except FileNotFoundError:
-                        st.sidebar.error("File not found.")
-                    except Exception as e:
-                        st.sidebar.error(f"Error opening Excel file: {e}")
-            else:
-                st.sidebar.success(f"Opened: {st.session_state.excel_path}")
-                try:
-                    xls = pd.ExcelFile(st.session_state.excel_path)
-                    sheet_names = xls.sheet_names
-                    selected_sheet = st.sidebar.selectbox("Select a sheet", sheet_names)
-                    header_row = st.sidebar.number_input("Header Row", min_value=0, value=0, help="The row number (0-indexed) to use as the column headers.")
-                    if st.sidebar.button("Load Sheet"):
-                        st.session_state.data_df = pd.read_excel(st.session_state.excel_path, sheet_name=selected_sheet, header=header_row)
-                        st.session_state.data_df = st.session_state.data_df.replace(r'^\s*$', np.nan, regex=True)
-                        st.session_state.cleaned_df = None
-                        st.rerun()
-                except Exception as e:
-                    st.sidebar.error(f"Error processing Excel file: {e}")
-
-                if st.sidebar.button("Close Excel"):
-                    st.session_state.excel_path = None
-                    st.session_state.data_df = None
-                    st.session_state.cleaned_df = None
-                    st.rerun()
 
     # --- Main App ---
     if st.session_state.data_df is not None and not st.session_state.data_df.empty:
@@ -284,6 +286,25 @@ def main(mode):
 
         st.sidebar.subheader("Loaded Data Columns")
         st.sidebar.dataframe(data_df.dtypes.astype(str).rename_axis(None).reset_index().rename(columns={'index': 'column', 0: 'dtype'}))
+
+        is_time_series = st.sidebar.checkbox("Time Series Data", key="is_time_series")
+        if is_time_series:
+            time_series_col = st.sidebar.selectbox("Select the time series column", st.session_state.data_df.columns, key="time_series_col_selector")
+            time_series_period = st.sidebar.selectbox("Select the time series period",["Daily", "Monthly", "Quarterly", "Yearly"], key="time_series_period_selector")
+            period_dict = {"Daily":"D", "Monthly":"M", "Quarterly":"Q", "Yearly":"Y"}
+
+            def on_apply_clicked():
+                # st.session_state.time_series_col = st.session_state.time_series_col_selector
+                # st.session_state.time_series_period = st.session_state.time_series_period_selector
+                if st.session_state.time_series_col_selector and st.session_state.time_series_period_selector:
+                    try:
+                        st.session_state.data_df[st.session_state.time_series_col_selector] = pd.PeriodIndex(st.session_state.data_df[st.session_state.time_series_col_selector],
+                                                                                                             freq=period_dict[st.session_state.time_series_period_selector])
+                    except Exception as e:
+                        print(f"Cannot convert column {st.session_state.time_series_col_selector} to period type of {st.session_state.time_series_period_selector}")
+                        st.toast(f"Failed to convert column {st.session_state.time_series_col_selector} to proper time type internally, it will be treat as normal string.")
+
+            st.sidebar.button('Apply', on_click=on_apply_clicked)
 
         tab1, tab2, tab3, tab4, tab5 = st.tabs(["Data View", "Column Analysis", "Filter & Plot", "Pivot Table", "Data Cleaning"])
 
@@ -334,14 +355,14 @@ def main(mode):
                         nbins = st.slider("Number of bins", min_value=5, max_value=100, value=30, key="hist_bins")
                         fig = px.histogram(data_df, x=column_to_analyze, nbins=nbins,
                                            title=f"Histogram of {column_to_analyze}")
-                        st.plotly_chart(fig, use_container_width=True, config={'toImageButtonOptions': {'scale': 3}})
+                        st.plotly_chart(fig, width='stretch', config={'toImageButtonOptions': {'scale': 3}})
                     else:
                         st.warning("Histogram is only available for numeric columns.")
 
                 elif analysis_type == 'Box Plot':
                     if is_numeric:
                         fig = px.box(data_df, y=column_to_analyze, title=f"Box Plot of {column_to_analyze}")
-                        st.plotly_chart(fig, use_container_width=True, config={'toImageButtonOptions': {'scale': 3}})
+                        st.plotly_chart(fig, width='stretch', config={'toImageButtonOptions': {'scale': 3}})
                     else:
                         st.warning("Box Plot is only available for numeric columns.")
 
@@ -354,7 +375,7 @@ def main(mode):
                     fig = px.bar(counts, x=column_to_analyze, y='count',
                                  title=f"Top {top_n} Value Counts for {column_to_analyze}")
                     fig.update_xaxes(type='category')
-                    st.plotly_chart(fig, use_container_width=True, config={'toImageButtonOptions': {'scale': 3}})
+                    st.plotly_chart(fig, width='stretch', config={'toImageButtonOptions': {'scale': 3}})
 
                     st.write(col_data.value_counts().reset_index())
 
@@ -368,7 +389,7 @@ def main(mode):
                         fig = px.scatter(data_df, y=column_to_analyze, title=f"Value Plot of {column_to_analyze}")
 
                     fig.update_xaxes(title_text='Index')
-                    st.plotly_chart(fig, use_container_width=True, config={'toImageButtonOptions': {'scale': 3}})
+                    st.plotly_chart(fig, width='stretch', config={'toImageButtonOptions': {'scale': 3}})
 
             else:
                 st.subheader("Multi-Column Analysis")
@@ -397,22 +418,22 @@ def main(mode):
                     corr_matrix = data_df[columns_to_analyze].corr()
                     fig = px.imshow(corr_matrix, text_auto=True, title="Correlation Heatmap",
                                     color_continuous_scale='RdBu_r', zmin=-1, zmax=1)
-                    st.plotly_chart(fig, use_container_width=True, config={'toImageButtonOptions': {'scale': 3}})
+                    st.plotly_chart(fig, width='stretch', config={'toImageButtonOptions': {'scale': 3}})
 
                 elif analysis_type == 'Value Plot (Line)':
                     fig = px.line(data_df, y=columns_to_analyze, title="Value Plot")
                     fig.update_xaxes(title_text='Index')
-                    st.plotly_chart(fig, use_container_width=True, config={'toImageButtonOptions': {'scale': 3}})
+                    st.plotly_chart(fig, width='stretch', config={'toImageButtonOptions': {'scale': 3}})
 
                 elif analysis_type == 'Box Plot':
                     fig = px.box(data_df, y=columns_to_analyze, title="Box Plots")
-                    st.plotly_chart(fig, use_container_width=True, config={'toImageButtonOptions': {'scale': 3}})
+                    st.plotly_chart(fig, width='stretch', config={'toImageButtonOptions': {'scale': 3}})
 
                 elif analysis_type == 'Scatter Matrix':
                     st.info(
                         "A scatter matrix plots every numeric column against every other. It can be slow for many columns.")
                     fig = px.scatter_matrix(data_df, dimensions=columns_to_analyze, title="Scatter Matrix")
-                    st.plotly_chart(fig, use_container_width=True, config={'toImageButtonOptions': {'scale': 3}})
+                    st.plotly_chart(fig, width='stretch', config={'toImageButtonOptions': {'scale': 3}})
 
         with tab3:
             st.header("Advanced Filter")
@@ -491,7 +512,7 @@ def main(mode):
             else:
                 st.info("Select columns to see a summary.")
 
-            with st.expander("Plotting Options"):
+            with st.expander("Plotting Options", expanded=True):
                 def add_adv_plot():
                     st.session_state.adv_plots.append(1)
 
@@ -669,7 +690,51 @@ def main(mode):
                     st.rerun()
 
     else:
-        st.info("Please connect to a data source and load data to begin. Your data is NOT logged, saved, or used any where else except be presented in this UI.")
+        st.markdown(
+            """
+            <div style="text-align: center;">
+                <p class="rainbow-static-text" style="font-family: 'Comic Sans MS', cursive, sans-serif; font-size: 1.2em;">Your interactive tool for viewing, analyzing, and cleaning your data.</p>
+            </div>
+            <style>
+                .rainbow-static-text {
+                    background: linear-gradient(to right, #8E2DE2, #4A00E0, #00C6FF, #0072FF, #00F260);
+                    -webkit-background-clip: text;
+                    background-clip: text;
+                    color: transparent;
+                }
+            </style>
+            """,
+            unsafe_allow_html=True,
+        )
+
+        st.markdown("---")
+
+        col1, col2 = st.columns(2)
+
+        with col1:
+            st.markdown(
+                """
+                ### 💡 What you can do:
+                - **Connect to your data:** Upload CSV or Excel files, or connect to a SQLite database.
+                - **Explore your data:** View your data in a table, get summary statistics, and analyze columns.
+                - **Create interactive plots:** Build line charts, bar charts, scatter plots, and more.
+                - **Clean your data:** Handle missing values, remove duplicates, and more.
+                - **Create pivot tables:** Summarize your data with interactive pivot tables.
+                """
+            )
+
+        with col2:
+            with open("bouncing_balls.html", "r") as f:
+                components.html(f.read(), height=200)
+
+        st.markdown("---")
+
+        st.info("To get started, please connect to a data source using the sidebar on the left.")
+        st.markdown(
+            """
+            *Your data is NOT logged, saved, or used in any way except to presented here.*
+            """
+        )
 
 
 if __name__ == "__main__":
