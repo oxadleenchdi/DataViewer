@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <style>
+        body, html { margin: 0; padding: 0; overflow: hidden; }
+        canvas { display: block; }
+    </style>
+</head>
+<body>
+    <canvas id="bouncing-balls-canvas"></canvas>
+    <script>
+        const canvas = document.getElementById('bouncing-balls-canvas');
+        const ctx = canvas.getContext('2d');
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+
+        let mouse = {
+            x: null,
+            y: null
+        };
+
+        window.addEventListener('mousemove', (event) => {
+            mouse.x = event.x;
+            mouse.y = event.y;
+        });
+
+        class Ball {
+            constructor(x, y, dx, dy, radius, color) {
+                this.x = x;
+                this.y = y;
+                this.dx = dx;
+                this.dy = dy;
+                this.radius = radius;
+                this.color = color;
+            }
+
+            draw() {
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2, false);
+                ctx.fillStyle = this.color;
+                ctx.fill();
+            }
+
+            update() {
+                if (this.x + this.radius > canvas.width || this.x - this.radius < 0) {
+                    this.dx = -this.dx;
+                }
+                if (this.y + this.radius > canvas.height || this.y - this.radius < 0) {
+                    this.dy = -this.dy;
+                }
+
+                // Move towards mouse
+                if (mouse.x && mouse.y) {
+                    let dx_mouse = mouse.x - this.x;
+                    let dy_mouse = mouse.y - this.y;
+                    let distance = Math.sqrt(dx_mouse * dx_mouse + dy_mouse * dy_mouse);
+                    if (distance < 100) {
+                        this.x += dx_mouse * 0.01;
+                        this.y += dy_mouse * 0.01;
+                    }
+                }
+
+                this.x += this.dx;
+                this.y += this.dy;
+
+                this.draw();
+            }
+        }
+
+        let ballArray = [];
+        for (let i = 0; i < 15; i++) {
+            let radius = Math.random() * 10 + 5;
+            let x = Math.random() * (canvas.width - radius * 2) + radius;
+            let y = Math.random() * (canvas.height - radius * 2) + radius;
+            let dx = (Math.random() - 0.5) * 2;
+            let dy = (Math.random() - 0.5) * 2;
+            let color = `hsl(${Math.random() * 360}, 50%, 50%)`;
+            ballArray.push(new Ball(x, y, dx, dy, radius, color));
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            for (let i = 0; i < ballArray.length; i++) {
+                ballArray[i].update();
+            }
+        }
+
+        animate();
+    </script>
+</body>
+</html>
