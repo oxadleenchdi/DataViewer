@@ -89,7 +89,7 @@ def display_plot(df, columns, key_prefix):
                     # plot_df[y_axis] = plot_df[y_axis].astype('datetime64[ns]')
                     plot_df[y_axis] = plot_df[y_axis].astype('str')
 
-            print(plot_df.head(3))
+            # print(plot_df.head(3))
             plot_type = st.session_state.get(f"{key_prefix}_plot_type", 'Line')
             show_values = st.session_state.get(f"{key_prefix}_show_values", False)
             fig = None
