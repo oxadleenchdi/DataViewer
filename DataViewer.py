@@ -77,14 +77,14 @@ def display_plot(df, columns, key_prefix):
     if x_axis and y_axes:
         try:
             plot_df = df.copy()
-            if pd.api.types.is_period_dtype(plot_df[x_axis].dtype):
+            if isinstance(plot_df[x_axis].dtype, pd.PeriodDtype):
                 # plot_df[x_axis] = plot_df[x_axis].to_timestamp()
                 # plot_df[x_axis] = plot_df[x_axis].astype('datetime64[ns]')
                 plot_df[x_axis] = plot_df[x_axis].astype('str')
                 # print(type(plot_df[x_axis][0]))
                 # pass
             for y_axis in y_axes:
-                if pd.api.types.is_period_dtype(plot_df[y_axis].dtype):
+                if isinstance(plot_df[y_axis].dtype, pd.PeriodDtype):
                     # plot_df[y_axis] = plot_df[y_axis].to_timestamp()
                     # plot_df[y_axis] = plot_df[y_axis].astype('datetime64[ns]')
                     plot_df[y_axis] = plot_df[y_axis].astype('str')
@@ -476,7 +476,7 @@ def main(mode):
                     st.session_state.adv_filters.append({'column': data_df.columns[0], 'operator': '==', 'value': ''})
 
                 def add_time_filter():
-                    period_cols = [col for col in data_df.columns if pd.api.types.is_period_dtype(data_df[col].dtype)]
+                    period_cols = [col for col in data_df.columns if isinstance(data_df[col].dtype, pd.PeriodDtype)]
                     if not period_cols:
                         st.warning("No PeriodIndex columns available for time-based filtering.")
                         return
@@ -510,7 +510,7 @@ def main(mode):
                         all_columns_list = data_df.columns.tolist()
                         column_options = all_columns_list
                         if is_time_filter:
-                            column_options = [col for col in all_columns_list if pd.api.types.is_period_dtype(data_df[col].dtype)]
+                            column_options = [col for col in all_columns_list if isinstance(data_df[col].dtype, pd.PeriodDtype)]
                         
                         st.selectbox("Column", column_options, key=f'adv_col_{i}', 
                                      index=column_options.index(f['column']) if f['column'] in column_options else 0,
@@ -569,7 +569,7 @@ def main(mode):
                         value = f['value']
                         operator = f['operator']
 
-                        if f.get('filter_type') == 'Component' and pd.api.types.is_period_dtype(col_type):
+                        if f.get('filter_type') == 'Component' and isinstance(col_type, pd.PeriodDtype):
                             component = f['time_component']
                             accessor = filtered_df[col_name].dt
                             
@@ -596,7 +596,7 @@ def main(mode):
                                 filtered_df = filtered_df[getattr(accessor, component) <= typed_values]
 
                         elif operator in ['in', 'not in']:
-                            if pd.api.types.is_period_dtype(col_type):
+                            if isinstance(col_type, pd.PeriodDtype):
                                 typed_values = [pd.Period(v, freq=data_df[col_name].dt.freq) for v in value]
                             else:
                                 typed_values = pd.Series(value).astype(col_type).tolist()
@@ -613,7 +613,7 @@ def main(mode):
                                 except (ValueError, TypeError):
                                     st.error(f"Invalid numeric value for column '{col_name}': {value}")
                                     continue
-                            elif pd.api.types.is_period_dtype(col_type):
+                            elif isinstance(col_type, pd.PeriodDtype):
                                 try:
                                     val_for_query = pd.Period(value, freq=data_df[col_name].dt.freq)
                                 except (ValueError, TypeError):
