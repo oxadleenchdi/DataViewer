@@ -39,6 +39,27 @@ def get_table_data(conn, table_name):
         st.error(f"Error getting table data: {e}")
         return pd.DataFrame()
 
+def parse_skiprows(skip_rows_str):
+    if not skip_rows_str:
+        return None
+    rows_to_skip = set()
+    for part in skip_rows_str.split(','):
+        part = part.strip()
+        if '-' in part:
+            try:
+                start, end = map(int, part.split('-'))
+                rows_to_skip.update(range(start, end + 1))
+            except ValueError:
+                st.error(f"Invalid range in skiprows: {part}")
+                return None
+        else:
+            try:
+                rows_to_skip.add(int(part))
+            except ValueError:
+                st.error(f"Invalid row number in skiprows: {part}")
+                return None
+    return list(rows_to_skip)
+
 def display_plot(df, columns, key_prefix):
     x_axis = st.selectbox("X-axis", options=columns, key=f"{key_prefix}_x_axis")
     y_axes = st.multiselect("Y-axes", options=[c for c in columns if c != x_axis], key=f"{key_prefix}_y_axes")
@@ -181,6 +202,7 @@ def main(mode):
         if st.session_state.uploaded_file_obj is not None:
             try:
                 header_row = st.sidebar.number_input("Header Row", min_value=0, value=0, help="The row number (0-indexed) to use as the column headers.")
+                skip_rows_str = st.sidebar.text_input("Skip Rows", help="e.g., 0,1,2 or 1,4-6,7")
 
                 file_extension = st.session_state.uploaded_filename.split('.')[-1].lower()
                 if file_extension in ["xlsx", "xls", "xlsm"]:
@@ -189,11 +211,12 @@ def main(mode):
                     selected_sheet = st.sidebar.selectbox("Select a sheet to load", sheet_names)
 
                 if st.sidebar.button("Load Data", type="secondary"):
+                    skip_rows = parse_skiprows(skip_rows_str)
                     st.session_state.uploaded_file_obj.seek(0)
                     if file_extension == "csv":
-                        st.session_state.data_df = pd.read_csv(st.session_state.uploaded_file_obj, header=header_row)
+                        st.session_state.data_df = pd.read_csv(st.session_state.uploaded_file_obj, header=header_row, skiprows=skip_rows)
                     elif file_extension in ["xlsx", "xls", "xlsm"]:
-                        st.session_state.data_df = pd.read_excel(st.session_state.uploaded_file_obj, sheet_name=selected_sheet, header=header_row)
+                        st.session_state.data_df = pd.read_excel(st.session_state.uploaded_file_obj, sheet_name=selected_sheet, header=header_row, skiprows=skip_rows)
                     
                     st.session_state.data_df = st.session_state.data_df.replace(r'^\s*$', np.nan, regex=True)
                     st.session_state.cleaned_df = None
@@ -259,9 +282,11 @@ def main(mode):
         if st.session_state.get('csv_path') is not None:
             st.sidebar.success(f"Loaded: {st.session_state.csv_path}")
             header_row = st.sidebar.number_input("Header Row", min_value=0, value=0, help="The row number (0-indexed) to use as the column headers.")
+            skip_rows_str = st.sidebar.text_input("Skip Rows", help="e.g., 0,1,2 or 1,4-6,7")
             if st.sidebar.button("Load Data", type="secondary"):
                 try:
-                    st.session_state.data_df = pd.read_csv(st.session_state.csv_path, header=header_row)
+                    skip_rows = parse_skiprows(skip_rows_str)
+                    st.session_state.data_df = pd.read_csv(st.session_state.csv_path, header=header_row, skiprows=skip_rows)
                     st.session_state.data_df = st.session_state.data_df.replace(r'^\s*$', np.nan, regex=True)
                     st.session_state.cleaned_df = None
                     st.rerun()
@@ -283,8 +308,10 @@ def main(mode):
                 sheet_names = xls.sheet_names
                 selected_sheet = st.sidebar.selectbox("Select a sheet", sheet_names)
                 header_row = st.sidebar.number_input("Header Row", min_value=0, value=0, help="The row number (0-indexed) to use as the column headers.")
+                skip_rows_str = st.sidebar.text_input("Skip Rows", help="e.g., 0,1,2 or 1,4-6,7")
                 if st.sidebar.button("Load Data", type="secondary"):
-                    st.session_state.data_df = pd.read_excel(st.session_state.excel_path, sheet_name=selected_sheet, header=header_row)
+                    skip_rows = parse_skiprows(skip_rows_str)
+                    st.session_state.data_df = pd.read_excel(st.session_state.excel_path, sheet_name=selected_sheet, header=header_row, skiprows=skip_rows)
                     st.session_state.data_df = st.session_state.data_df.replace(r'^\s*$', np.nan, regex=True)
                     st.session_state.cleaned_df = None
                     st.rerun()
