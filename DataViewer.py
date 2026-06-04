@@ -183,7 +183,14 @@ def main(mode):
         st.sidebar.warning("User data has been completed destroyed.")
         st.session_state.show_clear_message = False
 
+    # --- Support Info ---
+    with st.sidebar.expander("Contact"):
+        st.write("For support, please contact:")
+        st.markdown("**white.dew@hotmail.com**")
+
     st.sidebar.header("Data Source")
+
+
 
     # --- SERVER MODE ---
     if mode == 'server':
@@ -333,6 +340,11 @@ def main(mode):
         st.sidebar.subheader("Loaded Data Columns")
         st.sidebar.dataframe(data_df.dtypes.astype(str).rename_axis(None).reset_index().rename(columns={'index': 'column', 0: 'dtype'}))
 
+        # --- Support Info ---
+        with st.sidebar.expander("Contact Support"):
+            st.write("For support, please contact:")
+            st.markdown("**white.dew@hotmail.com**")
+
         is_time_series = st.sidebar.checkbox("Time Series Data", key="is_time_series")
         if is_time_series:
             time_series_col = st.sidebar.selectbox("Select the time series column", st.session_state.data_df.columns, key="time_series_col_selector")
@@ -351,6 +363,11 @@ def main(mode):
                         st.toast(f"Failed to convert column {st.session_state.time_series_col_selector} to proper time type internally, it will be treat as normal string.")
 
             st.sidebar.button('Apply', on_click=on_apply_clicked)
+
+        # --- Support Info ---
+        with st.sidebar.expander("Contact Support"):
+            st.write("For support, please contact:")
+            st.markdown("**white.dew@hotmail.com**")
 
         tab1, tab2, tab3, tab4, tab5 = st.tabs(["Data View", "Column Analysis", "Filter & Plot", "Pivot Table", "Data Cleaning"])
 
