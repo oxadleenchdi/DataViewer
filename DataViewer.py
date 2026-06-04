@@ -478,7 +478,7 @@ def main(mode):
                 def add_time_filter():
                     period_cols = [col for col in data_df.columns if isinstance(data_df[col].dtype, pd.PeriodDtype)]
                     if not period_cols:
-                        st.warning("No PeriodIndex columns available for time-based filtering.")
+                        st.toast("No times series data info given, use 'Time Series Data' to provide time info")
                         return
                     default_col = period_cols[0]
                     st.session_state.adv_filters.append({'column': default_col, 'operator': '==', 'value': '', 'filter_type': 'Component', 'time_component': 'year'})
@@ -499,7 +499,7 @@ def main(mode):
                 with col_add_buttons[0]:
                     st.button("Add Filter", on_click=add_adv_filter)
                 with col_add_buttons[1]:
-                    st.button("Add Time Component Filter", on_click=add_time_filter)
+                    st.button("Filter By Time Component", on_click=add_time_filter, help='Filter by year/quarter/month/day for time series data. need set time series data info in left pane')
 
                 for i, f in enumerate(st.session_state.adv_filters):
                     filter_cols = st.columns([3, 2, 3, 3, 1]) # Column, Operator, Value, Component, Remove
