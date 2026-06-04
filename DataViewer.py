@@ -56,6 +56,8 @@ def display_plot(df, columns, key_prefix):
         elif plot_type == 'Scatter':
             st.selectbox("Size by", options=[None] + [c for c in columns if pd.api.types.is_numeric_dtype(df[c])],
                          key=f"{key_prefix}_size")
+        st.checkbox("Use raw time format", key=f"{key_prefix}_plot_force_use_raw_time_format")
+
 
     with st.expander("Annotate & Modify Plot"):
         title_input = st.text_input("Plot Title", key=f"{key_prefix}_title_input")
@@ -74,18 +76,32 @@ def display_plot(df, columns, key_prefix):
 
     if x_axis and y_axes:
         try:
+            plot_df = df.copy()
+            if pd.api.types.is_period_dtype(plot_df[x_axis].dtype):
+                # plot_df[x_axis] = plot_df[x_axis].to_timestamp()
+                # plot_df[x_axis] = plot_df[x_axis].astype('datetime64[ns]')
+                plot_df[x_axis] = plot_df[x_axis].astype('str')
+                # print(type(plot_df[x_axis][0]))
+                # pass
+            for y_axis in y_axes:
+                if pd.api.types.is_period_dtype(plot_df[y_axis].dtype):
+                    # plot_df[y_axis] = plot_df[y_axis].to_timestamp()
+                    # plot_df[y_axis] = plot_df[y_axis].astype('datetime64[ns]')
+                    plot_df[y_axis] = plot_df[y_axis].astype('str')
+
+            print(plot_df.head(3))
             plot_type = st.session_state.get(f"{key_prefix}_plot_type", 'Line')
             show_values = st.session_state.get(f"{key_prefix}_show_values", False)
             fig = None
             if plot_type == 'Line':
-                fig = px.line(df, x=x_axis, y=y_axes, markers=st.session_state.get(f"{key_prefix}_markers", False),
+                fig = px.line(plot_df, x=x_axis, y=y_axes, markers=st.session_state.get(f"{key_prefix}_markers", False),
                               color=st.session_state.get(f"{key_prefix}_color"),
                               symbol=st.session_state.get(f"{key_prefix}_symbol"))
             elif plot_type == 'Bar':
-                fig = px.bar(df, x=x_axis, y=y_axes, barmode=st.session_state.get(f"{key_prefix}_barmode", 'group'),
+                fig = px.bar(plot_df, x=x_axis, y=y_axes, barmode=st.session_state.get(f"{key_prefix}_barmode", 'group'),
                              color=st.session_state.get(f"{key_prefix}_color"))
             elif plot_type == 'Scatter':
-                fig = px.scatter(df, x=x_axis, y=y_axes[0], color=st.session_state.get(f"{key_prefix}_color"),
+                fig = px.scatter(plot_df, x=x_axis, y=y_axes[0], color=st.session_state.get(f"{key_prefix}_color"),
                                  size=st.session_state.get(f"{key_prefix}_size"),
                                  symbol=st.session_state.get(f"{key_prefix}_symbol"))
             if fig:
@@ -111,6 +127,9 @@ def display_plot(df, columns, key_prefix):
                 )
                 if new_legend_names:
                     fig.for_each_trace(lambda t: t.update(name=new_legend_names.get(t.name, t.name)))
+
+                if st.session_state.get(f"{key_prefix}_plot_force_use_raw_time_format", False):
+                    fig.update_xaxes(type='category')  # Force categorical, not datetime
                 st.plotly_chart(fig, width='stretch', config={'toImageButtonOptions': {'scale': 3}})
         except Exception as e:
             st.error(f"Error plotting: {e}")
@@ -456,53 +475,155 @@ def main(mode):
                 def add_adv_filter():
                     st.session_state.adv_filters.append({'column': data_df.columns[0], 'operator': '==', 'value': ''})
 
+                def add_time_filter():
+                    period_cols = [col for col in data_df.columns if pd.api.types.is_period_dtype(data_df[col].dtype)]
+                    if not period_cols:
+                        st.warning("No PeriodIndex columns available for time-based filtering.")
+                        return
+                    default_col = period_cols[0]
+                    st.session_state.adv_filters.append({'column': default_col, 'operator': '==', 'value': '', 'filter_type': 'Component', 'time_component': 'year'})
+
                 def remove_adv_filter(index):
                     st.session_state.adv_filters.pop(index)
 
-                st.button("Add filter", on_click=add_adv_filter)
-                for i, f in enumerate(st.session_state.adv_filters):
-                    cols = st.columns(4)
-                    f['column'] = cols[0].selectbox("Column", data_df.columns, key=f'adv_col_{i}',
-                                                    index=data_df.columns.tolist().index(f['column']))
-                    f['operator'] = cols[1].selectbox("Operator", ['==', '!=', '>', '<', '>=', '<=', 'in', 'not in'],
-                                                      key=f'adv_op_{i}',
-                                                      index=['==', '!=', '>', '<', '>=', '<=', 'in', 'not in'].index(
-                                                          f['operator']))
-                    col_type = data_df[f['column']].dtype
-                    if pd.api.types.is_numeric_dtype(col_type):
-                        f['value'] = cols[2].text_input("Value", key=f'adv_val_{i}', value=f.get('value', ''))
-                    else:
-                        unique_vals = data_df[f['column']].dropna().unique()
-                        if f['operator'] in ['in', 'not in']:
-                            f['value'] = cols[2].multiselect("Value", options=unique_vals, key=f'adv_val_{i}',
-                                                             default=f.get('value', []))
-                        else:
-                            f['value'] = cols[2].selectbox("Value", options=unique_vals, key=f'adv_val_{i}',
-                                                           index=0 if not f.get('value') or f.get(
-                                                               'value') not in unique_vals else unique_vals.tolist().index(
-                                                               f.get('value')))
-                    cols[3].button("Remove", on_click=remove_adv_filter, args=(i,), key=f'adv_rem_{i}')
+                def on_column_change(filter_index):
+                    new_column = st.session_state[f'adv_col_{filter_index}']
+                    is_time_filter = st.session_state.adv_filters[filter_index].get('filter_type') is not None
 
+                    st.session_state.adv_filters[filter_index] = {'column': new_column, 'operator': '==', 'value': ''}
+                    if is_time_filter:
+                        st.session_state.adv_filters[filter_index]['filter_type'] = 'Component'
+                        st.session_state.adv_filters[filter_index]['time_component'] = 'year'
+
+                col_add_buttons = st.columns(2)
+                with col_add_buttons[0]:
+                    st.button("Add Filter", on_click=add_adv_filter)
+                with col_add_buttons[1]:
+                    st.button("Add Time Component Filter", on_click=add_time_filter)
+
+                for i, f in enumerate(st.session_state.adv_filters):
+                    filter_cols = st.columns([3, 2, 3, 3, 1]) # Column, Operator, Value, Component, Remove
+
+                    is_time_filter = f.get('filter_type') is not None
+
+                    with filter_cols[0]:
+                        all_columns_list = data_df.columns.tolist()
+                        column_options = all_columns_list
+                        if is_time_filter:
+                            column_options = [col for col in all_columns_list if pd.api.types.is_period_dtype(data_df[col].dtype)]
+                        
+                        st.selectbox("Column", column_options, key=f'adv_col_{i}', 
+                                     index=column_options.index(f['column']) if f['column'] in column_options else 0,
+                                     on_change=on_column_change, args=(i,))
+                    
+                    col_name = f['column']
+                    col_type = data_df[col_name].dtype
+
+                    if is_time_filter:
+                        with filter_cols[3]: # Component
+                            f['time_component'] = st.selectbox("Component", ['year', 'month', 'quarter', 'day'], 
+                                                               key=f'adv_time_comp_{i}', 
+                                                               index=['year', 'month', 'quarter', 'day'].index(f.get('time_component', 'year')))
+                    
+                    with filter_cols[1]: # Operator
+                        operator_options = ['==', '!=', '>', '<', '>=', '<=', 'in', 'not in']
+                        f['operator'] = st.selectbox("Operator", operator_options,
+                                                     key=f'adv_op_{i}',
+                                                     index=operator_options.index(f.get('operator', '==')) if f.get('operator', '==') in operator_options else 0)
+
+                    with filter_cols[2]: # Value
+                        source_data = data_df[col_name]
+                        if is_time_filter:
+                            source_data = getattr(source_data.dt, f['time_component'])
+                        
+                        unique_vals = source_data.dropna().unique()
+                        
+                        if len(unique_vals) <= 50 and f['operator'] in ['==', '!=', 'in', 'not in']:
+                            options = sorted([str(v) for v in unique_vals])
+
+                            if f['operator'] in ['in', 'not in']:
+                                current_val = f.get('value', [])
+                                if not isinstance(current_val, list): current_val = [str(current_val)]
+                                default_val = [v for v in current_val if v in options]
+                                f['value'] = st.multiselect("Value", options=options, key=f"adv_val_{i}_{f.get('time_component')}", default=default_val)
+                            else: # '==' or '!='
+                                current_val = str(f.get('value', ''))
+                                index = 0
+                                if current_val in options:
+                                    index = options.index(current_val)
+                                f['value'] = st.selectbox("Value", options=options, key=f"adv_val_{i}_{f.get('time_component')}", index=index)
+                        else:
+                            f['value'] = st.text_input("Value", key=f"adv_val_{i}_{f.get('time_component')}", value=f.get('value', ''))
+
+                    with filter_cols[4]: # Remove button
+                        st.button("Remove", on_click=remove_adv_filter, args=(i,), key=f'adv_rem_{i}')
+            # --- Filtering Logic ---
             filtered_df = data_df.copy()
             for f in st.session_state.adv_filters:
-                if f['value'] and f['column'] and f['operator']:
+                value_exists = (f.get('value') is not None and f.get('value') != '') or (isinstance(f.get('value'), list) and len(f.get('value')) > 0)
+
+                if value_exists and f.get('column') and f.get('operator'):
                     try:
-                        if f['operator'] in ['in', 'not in']:
-                            values = f['value'] if isinstance(f['value'], list) else [v.strip() for v in
-                                                                                      f['value'].split(',')]
-                            if f['operator'] == 'in':
-                                filtered_df = filtered_df[filtered_df[f['column']].isin(values)]
+                        col_name = f['column']
+                        col_type = data_df[col_name].dtype
+                        value = f['value']
+                        operator = f['operator']
+
+                        if f.get('filter_type') == 'Component' and pd.api.types.is_period_dtype(col_type):
+                            component = f['time_component']
+                            accessor = filtered_df[col_name].dt
+                            
+                            if isinstance(value, list):
+                                typed_values = pd.Series(value).astype(int).tolist()
                             else:
-                                filtered_df = filtered_df[~filtered_df[f['column']].isin(values)]
+                                typed_values = int(value)
+
+                            if operator == 'in':
+                                filtered_df = filtered_df[getattr(accessor, component).isin(typed_values)]
+                            elif operator == 'not in':
+                                filtered_df = filtered_df[~getattr(accessor, component).isin(typed_values)]
+                            elif operator == '==': 
+                                filtered_df = filtered_df[getattr(accessor, component) == typed_values]
+                            elif operator == '!=': 
+                                filtered_df = filtered_df[getattr(accessor, component) != typed_values]
+                            elif operator == '>': 
+                                filtered_df = filtered_df[getattr(accessor, component) > typed_values]
+                            elif operator == '<': 
+                                filtered_df = filtered_df[getattr(accessor, component) < typed_values]
+                            elif operator == '>=': 
+                                filtered_df = filtered_df[getattr(accessor, component) >= typed_values]
+                            elif operator == '<=': 
+                                filtered_df = filtered_df[getattr(accessor, component) <= typed_values]
+
+                        elif operator in ['in', 'not in']:
+                            if pd.api.types.is_period_dtype(col_type):
+                                typed_values = [pd.Period(v, freq=data_df[col_name].dt.freq) for v in value]
+                            else:
+                                typed_values = pd.Series(value).astype(col_type).tolist()
+
+                            if operator == 'in':
+                                filtered_df = filtered_df[filtered_df[col_name].isin(typed_values)]
+                            else:
+                                filtered_df = filtered_df[~filtered_df[col_name].isin(typed_values)]
                         else:
-                            col_type = data_df[f['column']].dtype
-                            val = f['value']
+                            val_for_query = value
                             if pd.api.types.is_numeric_dtype(col_type):
-                                val = pd.to_numeric(f['value'])
-                            query_str = f"`{f['column']}` {f['operator']} @val"
+                                try:
+                                    val_for_query = pd.to_numeric(value)
+                                except (ValueError, TypeError):
+                                    st.error(f"Invalid numeric value for column '{col_name}': {value}")
+                                    continue
+                            elif pd.api.types.is_period_dtype(col_type):
+                                try:
+                                    val_for_query = pd.Period(value, freq=data_df[col_name].dt.freq)
+                                except (ValueError, TypeError):
+                                    st.error(f"Invalid period value for column '{col_name}': {value}")
+                                    continue
+                            
+                            query_str = f"`{col_name}` {operator} @val_for_query"
                             filtered_df = filtered_df.query(query_str)
                     except Exception as e:
-                        st.error(f"Filter error on column {f['column']}: {e}")
+                        st.error(f"Filter error on column '{f['column']}': {e}")
 
             st.subheader("Filtered Data")
             st.dataframe(filtered_df[columns_to_show])
