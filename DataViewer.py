@@ -182,11 +182,11 @@ def main(mode):
     if st.session_state.show_clear_message:
         st.sidebar.warning("User data has been completed destroyed.")
         st.session_state.show_clear_message = False
-
-    # --- Support Info ---
-    with st.sidebar.expander("Contact"):
-        st.write("For support, please contact:")
-        st.markdown("**white.dew@hotmail.com**")
+    if mode == 'server':
+        # --- Support Info ---
+        with st.sidebar.expander("Contact"):
+            st.write("For support, please contact:")
+            st.markdown("**white.dew@hotmail.com**")
 
     st.sidebar.header("Data Source")
 
