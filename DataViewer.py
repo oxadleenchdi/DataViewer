@@ -340,10 +340,7 @@ def main(mode):
         st.sidebar.subheader("Loaded Data Columns")
         st.sidebar.dataframe(data_df.dtypes.astype(str).rename_axis(None).reset_index().rename(columns={'index': 'column', 0: 'dtype'}))
 
-        # --- Support Info ---
-        with st.sidebar.expander("Contact Support"):
-            st.write("For support, please contact:")
-            st.markdown("**white.dew@hotmail.com**")
+
 
         is_time_series = st.sidebar.checkbox("Time Series Data", key="is_time_series")
         if is_time_series:
@@ -364,10 +361,7 @@ def main(mode):
 
             st.sidebar.button('Apply', on_click=on_apply_clicked)
 
-        # --- Support Info ---
-        with st.sidebar.expander("Contact Support"):
-            st.write("For support, please contact:")
-            st.markdown("**white.dew@hotmail.com**")
+
 
         tab1, tab2, tab3, tab4, tab5 = st.tabs(["Data View", "Column Analysis", "Filter & Plot", "Pivot Table", "Data Cleaning"])
 
