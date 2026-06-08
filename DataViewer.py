@@ -159,16 +159,6 @@ def display_plot(df, columns, key_prefix):
 def main(mode):
     st.set_page_config(layout="wide", page_title="Data Viewer")
 
-    # --- Language Selection ---
-    col_title, col_lang = st.columns([9, 1])
-    with col_lang:
-        lang_options = ["EN", "CH"]
-        current_lang = st.session_state.get("language", "EN")
-        selected_lang = st.selectbox("Language", options=lang_options, index=lang_options.index(current_lang), label_visibility="collapsed")
-        if selected_lang != current_lang:
-            st.session_state.language = selected_lang
-            st.rerun()
-
     st.title(i18n.get("app_title"))
 
     # --- Initialize Session State ---
@@ -194,7 +184,14 @@ def main(mode):
         st.sidebar.warning(i18n.get("data_destroyed"))
         st.session_state.show_clear_message = False
     if mode == 'server':
-        # --- Support Info ---
+        # --- Language & Support Info ---
+        lang_options = ["EN", "CH"]
+        current_lang = st.session_state.get("language", "EN")
+        selected_lang = st.sidebar.selectbox(f"{i18n.get('language')}:", options=lang_options, index=lang_options.index(current_lang))
+        if selected_lang != current_lang:
+            st.session_state.language = selected_lang
+            st.rerun()
+
         with st.sidebar.expander(i18n.get("contact")):
             st.write(i18n.get("support_contact"))
             st.markdown("**white.dew@hotmail.com**")
@@ -263,6 +260,14 @@ def main(mode):
 
     # --- LOCAL MODE ---
     else:
+        # --- Language Selection for Local Mode ---
+        lang_options = ["EN", "CH"]
+        current_lang = st.session_state.get("language", "EN")
+        selected_lang = st.sidebar.selectbox(f"{i18n.get('language')}:", options=lang_options, index=lang_options.index(current_lang))
+        if selected_lang != current_lang:
+            st.session_state.language = selected_lang
+            st.rerun()
+
         if st.session_state.get('db_conn') is None and st.session_state.get('csv_path') is None and st.session_state.get('excel_path') is None:
             path_input = st.sidebar.text_input(i18n.get("enter_path"))
             if st.sidebar.button(i18n.get("load_data")):
