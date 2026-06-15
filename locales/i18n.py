@@ -9,7 +9,7 @@ class I18n:
             try:
                 sys_lang = locale.getdefaultlocale()[0]
                 if sys_lang and sys_lang.startswith('zh'):
-                    st.session_state.language = "CH"
+                    st.session_state.language = "中文"
                 else:
                     st.session_state.language = "EN"
             except:
@@ -17,7 +17,7 @@ class I18n:
         
         self.translations = {
             "EN": en,
-            "CH": zh
+            "中文": zh
         }
 
     def get(self, key, *args):
