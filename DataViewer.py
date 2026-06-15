@@ -185,7 +185,7 @@ def main(mode):
         st.session_state.show_clear_message = False
     if mode == 'server':
         # --- Language & Support Info ---
-        lang_options = ["EN", "CH"]
+        lang_options = ["EN", "中文"]
         current_lang = st.session_state.get("language", "EN")
         selected_lang = st.sidebar.selectbox(f"{i18n.get('language')}:", options=lang_options, index=lang_options.index(current_lang))
         if selected_lang != current_lang:
