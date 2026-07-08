@@ -545,7 +545,6 @@ def main(mode):
                     if is_time_filter:
                         st.session_state.adv_filters[filter_index]['filter_type'] = 'Component'
                         st.session_state.adv_filters[filter_index]['time_component'] = 'year'
-                    print(f"DEBUG: Filter {filter_index}: Column changed to '{new_column}', value reset.")
 
                 col_add_buttons = st.columns(2)
                 with col_add_buttons[0]:
@@ -612,7 +611,6 @@ def main(mode):
             # --- Filtering Logic ---
             filtered_df = data_df.copy()
             for f in st.session_state.adv_filters:
-                print(f"DEBUG: Applying filter: {f}")
                 value_exists = (f.get('value') is not None and f.get('value') != '') or (isinstance(f.get('value'), list) and len(f.get('value')) > 0)
 
                 if value_exists and f.get('column') and f.get('operator'):
