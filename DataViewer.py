@@ -545,6 +545,7 @@ def main(mode):
                     if is_time_filter:
                         st.session_state.adv_filters[filter_index]['filter_type'] = 'Component'
                         st.session_state.adv_filters[filter_index]['time_component'] = 'year'
+                    print(f"DEBUG: Filter {filter_index}: Column changed to '{new_column}', value reset.")
 
                 col_add_buttons = st.columns(2)
                 with col_add_buttons[0]:
@@ -596,21 +597,22 @@ def main(mode):
                                 current_val = f.get('value', [])
                                 if not isinstance(current_val, list): current_val = [str(current_val)]
                                 default_val = [v for v in current_val if v in options]
-                                f['value'] = st.multiselect(i18n.get("value"), options=options, key=f"adv_val_{i}_{f.get('time_component')}", default=default_val)
+                                f['value'] = st.multiselect(i18n.get("value"), options=options, key=f"adv_val_{i}", default=default_val)
                             else: # '==' or '!='
                                 current_val = str(f.get('value', ''))
                                 index = 0
                                 if current_val in options:
                                     index = options.index(current_val)
-                                f['value'] = st.selectbox(i18n.get("value"), options=options, key=f"adv_val_{i}_{f.get('time_component')}", index=index)
+                                f['value'] = st.selectbox(i18n.get("value"), options=options, key=f"adv_val_{i}", index=index)
                         else:
-                            f['value'] = st.text_input(i18n.get("value"), key=f"adv_val_{i}_{f.get('time_component')}", value=f.get('value', ''))
+                            f['value'] = st.text_input(i18n.get("value"), key=f"adv_val_{i}", value=f.get('value', ''))
 
                     with filter_cols[4]: # Remove button
                         st.button(i18n.get("remove"), on_click=remove_adv_filter, args=(i,), key=f'adv_rem_{i}')
             # --- Filtering Logic ---
             filtered_df = data_df.copy()
             for f in st.session_state.adv_filters:
+                print(f"DEBUG: Applying filter: {f}")
                 value_exists = (f.get('value') is not None and f.get('value') != '') or (isinstance(f.get('value'), list) and len(f.get('value')) > 0)
 
                 if value_exists and f.get('column') and f.get('operator'):
